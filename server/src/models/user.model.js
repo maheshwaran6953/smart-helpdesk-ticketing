@@ -1,62 +1,53 @@
-const db = require("../config/db");
+const db = require('../config/db'); // now a promise pool
 
 const User = {};
 
-User.create = (newUser, result) => {
-    const query = `
-        INSERT INTO users (name, email, password, role, expertise)
-        VALUES (?, ?, ?, ?, ?)
-    `;
-    db.query(
-        query,
-        [
+User.create = async (newUser) => {
+try {
+    const [result] = await db.execute(
+    'INSERT INTO users (name, email, password, role, expertise) VALUES (?, ?, ?, ?, ?)',
+    [
         newUser.name,
         newUser.email,
         newUser.password,
-        newUser.role || "user",
-        newUser.expertise || null,
-        ],
-        (err, res) => {
-        if (err) {
-            console.error("Error creating user:", err);
-            result(err, null);
-            return;
-        }
-        result(null, { id: res.insertId, ...newUser });
-        },
+        newUser.role || 'user',
+        newUser.expertise || null
+    ]
     );
-    };
+    console.log('User created with id:', result.insertId);
+    return { id: result.insertId, ...newUser };
+} catch (err) {
+    console.error('Error creating user:', err);
+    throw err;
+}
+};
 
-    User.findByEmail = (email, result) => {
-    db.query("SELECT * FROM users WHERE email = ?", [email], (err, res) => {
-        if (err) {
-        result(err, null);
-        return;
-        }
-        if (res.length) {
-        result(null, res[0]);
-        return;
-        }
-        result({ kind: "not_found" }, null);
-    });
-    };
+User.findByEmail = async (email) => {
+try {
+    console.log('findByEmail called with:', email);
+    const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+    console.log('findByEmail found rows:', rows.length);
+    if (rows.length) {
+    return rows[0];
+    }
+    return null;
+} catch (err) {
+    console.error('Error in findByEmail:', err);
+    throw err;
+}
+};
 
-    User.findById = (id, result) => {
-    db.query(
-        "SELECT id, name, email, role, expertise FROM users WHERE id = ?",
-        [id],
-        (err, res) => {
-        if (err) {
-            result(err, null);
-            return;
-        }
-        if (res.length) {
-            result(null, res[0]);
-            return;
-        }
-        result({ kind: "not_found" }, null);
-        },
-    );
+User.findById = async (id) => {
+try {
+    const [rows] = await db.execute('SELECT id, name, email, role, expertise FROM users WHERE id = ?', [id]);
+    if (rows.length) {
+    return rows[0];
+    }
+    return null;
+} catch (err) {
+    console.error('Error in findById:', err);
+    throw err;
+}
 };
 
 module.exports = User;
