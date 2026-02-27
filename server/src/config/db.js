@@ -9,20 +9,18 @@ user: process.env.DB_USER,
 password: process.env.DB_PASSWORD,
 database: process.env.DB_NAME,
 waitForConnections: true,
-connectionLimit: 10,      // max 10 concurrent connections
+connectionLimit: 10,
 queueLimit: 0,
-connectTimeout: 10000     // 10 seconds timeout
+connectTimeout: 10000
 });
 
-// Test pool at startup
 pool.getConnection((err, connection) => {
 if (err) {
     console.error('Pool connection failed at startup:', err.message);
     process.exit(1);
 }
 console.log('MySQL pool created successfully');
-connection.release(); // release back to pool
+connection.release();
 });
 
-// Export the pool (not single connection)
-module.exports = pool.promise();  // Use promise version for cleaner callbacks later
+module.exports = pool.promise();

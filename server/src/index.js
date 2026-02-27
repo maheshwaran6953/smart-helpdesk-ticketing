@@ -5,6 +5,7 @@ const db = require('./config/db');
 const authRoutes = require('./routes/auth.routes');
 const ticketRoutes = require('./routes/ticket.routes');
 const commentRoutes = require('./routes/comment.routes');
+const notificationRoutes = require('./routes/notification.routes');
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/tickets/:id/comments', commentRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/', (req, res) => {
 res.json({ message: 'Helpdesk API is running!' });
