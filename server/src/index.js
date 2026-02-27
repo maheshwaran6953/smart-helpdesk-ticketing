@@ -7,6 +7,7 @@ const ticketRoutes = require('./routes/ticket.routes');
 const commentRoutes = require('./routes/comment.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const categoryRoutes = require('./routes/category.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 dotenv.config();
 
@@ -20,6 +21,7 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/tickets/:id/comments', commentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/', (req, res) => {
 res.json({ message: 'Helpdesk API is running!' });
