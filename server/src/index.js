@@ -8,6 +8,7 @@ const commentRoutes = require('./routes/comment.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const categoryRoutes = require('./routes/category.routes');
 const adminRoutes = require('./routes/admin.routes');
+const startSLAEscalationJob = require('./jobs/sla.job');
 
 dotenv.config();
 
@@ -29,5 +30,6 @@ res.json({ message: 'Helpdesk API is running!' });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
+    startSLAEscalationJob();
 });
