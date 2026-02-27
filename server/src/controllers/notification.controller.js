@@ -1,6 +1,5 @@
 const db = require('../config/db');
 
-// GET ALL NOTIFICATIONS FOR LOGGED IN USER
 exports.getNotifications = async (req, res) => {
 try {
     const [notifications] = await db.execute(`
@@ -9,7 +8,6 @@ try {
     ORDER BY created_at DESC
     `, [req.user.id]);
 
-    // Count unread
     const unreadCount = notifications.filter(n => !n.is_read).length;
 
     res.status(200).json({
@@ -23,7 +21,6 @@ try {
 }
 };
 
-// MARK ALL NOTIFICATIONS AS READ
 exports.markAllRead = async (req, res) => {
 try {
     await db.execute(
@@ -39,7 +36,6 @@ try {
 }
 };
 
-// MARK SINGLE NOTIFICATION AS READ
 exports.markOneRead = async (req, res) => {
 try {
     const { id } = req.params;
