@@ -76,4 +76,7 @@ router.get('/:id', ticketController.getTicketById);
 // Update ticket status — agent and admin only
 router.patch('/:id/status', allowRoles('agent', 'admin'), ticketController.updateTicketStatus);
 
+// Two-Way Closure Handshake — user confirms or rejects resolution
+router.post('/:id/verify', allowRoles('user'), ticketController.verifyTicketClosure);
+
 module.exports = router;
