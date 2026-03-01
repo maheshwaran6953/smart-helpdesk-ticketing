@@ -79,4 +79,7 @@ router.patch('/:id/status', allowRoles('agent', 'admin'), ticketController.updat
 // Two-Way Closure Handshake — user confirms or rejects resolution
 router.post('/:id/verify', allowRoles('user'), ticketController.verifyTicketClosure);
 
+// Manual reassign — admin only
+router.patch('/:id/reassign', allowRoles('admin'), ticketController.reassignTicket);
+
 module.exports = router;

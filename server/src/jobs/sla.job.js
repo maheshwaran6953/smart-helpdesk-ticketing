@@ -213,6 +213,46 @@ const runSLACheck = async () => {
       }
     }
 
+    const [pendingTickets] = await db.execute(`
+      SELECT * FROM tickets
+      WHERE status = 'pending_verification'
+      AND resolved_at < DATE_SUB(NOW(), INTERVAL 48 HOUR)
+    `);
+
+    if (pendingTickets.length > 0) {
+      console.log(`Auto-closing ${pendingTickets.length} ticket(s) pending verification > 48hrs...`);
+
+      const [admins] = await db.execute(
+        'SELECT id FROM users WHERE role = ?', ['admin']
+      );
+
+      for (const ticket of pendingTickets) {
+        await db.execute(
+          'UPDATE tickets SET status = ?, closed_at = NOW() WHERE id = ?',
+          ['closed', ticket.id]
+        );
+
+        await db.execute(
+          'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
+          [ticket.id, admins[0].id, 'pending_verification', 'closed', 'Auto-closed — user did not respond within 48 hours']
+        );
+
+        await db.execute(
+          'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
+          [ticket.user_id, `Your ticket "${ticket.title}" has been auto-closed as no response was received within 48 hours.`]
+        );
+
+        if (ticket.agent_id) {
+          await db.execute(
+            'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
+            [ticket.agent_id, `✅ Ticket #${ticket.id}: "${ticket.title}" was auto-closed after 48hrs — no user response.`]
+          );
+        }
+
+        console.log(`✅ Ticket #${ticket.id} auto-closed after 48hrs`);
+      }
+    }
+
   } catch (error) {
     console.error('SLA job error:', error.message);
   }
