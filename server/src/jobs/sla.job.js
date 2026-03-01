@@ -6,6 +6,9 @@ const runSLACheck = async () => {
 
   try {
 
+    // ─────────────────────────────────────────────
+    // PART 1 — Original SLA breach escalation logic
+    // ─────────────────────────────────────────────
     const [breachedTickets] = await db.execute(`
       SELECT t.*, u.name AS user_name
       FROM tickets t
@@ -78,6 +81,9 @@ const runSLACheck = async () => {
       console.log('Breach risk scores updated for all open tickets.');
     }
 
+    // ─────────────────────────────────────────────
+    // PART 3 — Warn admins about HIGH breach risk tickets (>= 80)
+    // ─────────────────────────────────────────────
     const [highRiskTickets] = await db.execute(`
       SELECT * FROM tickets
       WHERE status IN ('open', 'in_progress')
@@ -107,6 +113,103 @@ const runSLACheck = async () => {
             );
           }
         }
+      }
+    }
+
+    // ─────────────────────────────────────────────
+    // PART 4 — Auto-redistribution (breach risk >= 80%)
+    // ─────────────────────────────────────────────
+    const [redistributeTickets] = await db.execute(`
+      SELECT * FROM tickets
+      WHERE status IN ('open', 'in_progress')
+      AND breach_risk >= 80
+      AND agent_id IS NOT NULL
+    `);
+
+    if (redistributeTickets.length > 0) {
+      console.log(`Auto-redistribution check: ${redistributeTickets.length} critical risk ticket(s)...`);
+
+      for (const ticket of redistributeTickets) {
+
+        // Find least loaded agent — excluding current agent
+        const [agents] = await db.execute(`
+          SELECT u.id, u.name, COUNT(t.id) AS open_count
+          FROM users u
+          LEFT JOIN tickets t 
+            ON t.agent_id = u.id 
+            AND t.status IN ('open', 'in_progress')
+          WHERE u.role = 'agent'
+          AND u.id != ?
+          GROUP BY u.id, u.name
+          ORDER BY open_count ASC
+          LIMIT 1
+        `, [ticket.agent_id]);
+
+        if (agents.length === 0) {
+          console.log(`No alternate agent available for Ticket #${ticket.id}`);
+          continue;
+        }
+
+        const newAgent = agents[0];
+
+        // Skip if new agent is already more loaded than current agent
+        const [currentLoad] = await db.execute(`
+          SELECT COUNT(*) AS open_count FROM tickets
+          WHERE agent_id = ? AND status IN ('open', 'in_progress')
+        `, [ticket.agent_id]);
+
+        if (newAgent.open_count >= currentLoad[0].open_count) {
+          console.log(`Ticket #${ticket.id} — no better agent available, skipping redistribution`);
+          continue;
+        }
+
+        const oldAgentId = ticket.agent_id;
+
+        // Reassign the ticket
+        await db.execute(
+          `UPDATE tickets SET agent_id = ? WHERE id = ?`,
+          [newAgent.id, ticket.id]
+        );
+
+        // Log the reassignment
+        const [admins] = await db.execute(
+          'SELECT id FROM users WHERE role = ?', ['admin']
+        );
+
+        await db.execute(`
+          INSERT INTO ticket_logs
+          (ticket_id, changed_by, old_status, new_status, note)
+          VALUES (?, ?, ?, ?, ?)`,
+          [
+            ticket.id,
+            admins[0].id,
+            ticket.status,
+            ticket.status,
+            `Auto-redistributed — breach risk ${ticket.breach_risk}%. Reassigned from agent #${oldAgentId} to agent #${newAgent.id} (${newAgent.name})`
+          ]
+        );
+
+        // Notify old agent
+        await db.execute(
+          'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
+          [oldAgentId, `Ticket #${ticket.id}: "${ticket.title}" has been auto-reassigned due to ${ticket.breach_risk}% breach risk`]
+        );
+
+        // Notify new agent
+        await db.execute(
+          'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
+          [newAgent.id, `⚠️ Ticket #${ticket.id}: "${ticket.title}" has been assigned to you — breach risk is ${ticket.breach_risk}%. Please prioritize immediately.`]
+        );
+
+        // Notify admins
+        for (const admin of admins) {
+          await db.execute(
+            'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
+            [admin.id, `Auto-redistributed Ticket #${ticket.id} from agent #${oldAgentId} to ${newAgent.name} — breach risk ${ticket.breach_risk}%`]
+          );
+        }
+
+        console.log(`✅ Ticket #${ticket.id} auto-redistributed to ${newAgent.name} (breach risk: ${ticket.breach_risk}%)`);
       }
     }
 
