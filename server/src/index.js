@@ -8,6 +8,7 @@ const commentRoutes = require('./routes/comment.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const categoryRoutes = require('./routes/category.routes');
 const adminRoutes = require('./routes/admin.routes');
+const knowledgeRoutes = require('./routes/knowledge.routes');
 const startSLAEscalationJob = require('./jobs/sla.job');
 
 dotenv.config();
@@ -23,13 +24,14 @@ app.use('/api/tickets/:id/comments', commentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/knowledge', knowledgeRoutes);
 
 app.get('/', (req, res) => {
 res.json({ message: 'Helpdesk API is running!' });
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+    app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     startSLAEscalationJob();
 });
