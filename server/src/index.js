@@ -10,6 +10,7 @@ const categoryRoutes = require('./routes/category.routes');
 const adminRoutes = require('./routes/admin.routes');
 const knowledgeRoutes = require('./routes/knowledge.routes');
 const startSLAEscalationJob = require('./jobs/sla.job');
+const predictiveRoutes = require('./routes/predictive.routes');
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/predictive', require('./routes/predictive.routes'));
 
 app.get('/', (req, res) => {
 res.json({ message: 'Helpdesk API is running!' });
