@@ -82,4 +82,10 @@ router.post('/:id/verify', allowRoles('user'), ticketController.verifyTicketClos
 // Manual reassign — admin only
 router.patch('/:id/reassign', allowRoles('admin'), ticketController.reassignTicket);
 
+// KB Suggestions for a ticket
+router.get('/:id/kb-suggestions', allowRoles('agent', 'admin'), ticketController.getKBSuggestions);
+
+// Apply KB solution to ticket
+router.post('/:id/apply-solution/:kbId', allowRoles('agent', 'admin'), ticketController.applySolution);
+
 module.exports = router;
