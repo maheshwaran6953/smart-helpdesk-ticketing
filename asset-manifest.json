@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/smart-helpdesk-ticketing/static/css/main.f31e6ba1.css",
+    "main.js": "/smart-helpdesk-ticketing/static/js/main.32cbf310.js",
+    "static/js/453.825386d9.chunk.js": "/smart-helpdesk-ticketing/static/js/453.825386d9.chunk.js",
+    "index.html": "/smart-helpdesk-ticketing/index.html",
+    "main.f31e6ba1.css.map": "/smart-helpdesk-ticketing/static/css/main.f31e6ba1.css.map",
+    "main.32cbf310.js.map": "/smart-helpdesk-ticketing/static/js/main.32cbf310.js.map",
+    "453.825386d9.chunk.js.map": "/smart-helpdesk-ticketing/static/js/453.825386d9.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.f31e6ba1.css",
+    "static/js/main.32cbf310.js"
+  ]
+}
