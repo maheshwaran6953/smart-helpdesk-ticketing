@@ -1,28 +1,26 @@
-const mysql = require('mysql2');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
-const dotenv = require('dotenv');
-dotenv.config();
+const connectDB = async () => {
+  try {
+    const mongoURL = process.env.MONGODB_URI;
+    
+    if (!mongoURL) {
+      throw new Error('MONGODB_URI not defined in .env');
+    }
 
-const pool = mysql.createPool({
-host: process.env.DB_HOST,
-port: process.env.DB_PORT,
-user: process.env.DB_USER,
-password: process.env.DB_PASSWORD,
-database: process.env.DB_NAME,
-ssl: { rejectUnauthorized: false },
-waitForConnections: true,
-connectionLimit: 10,
-queueLimit: 0,
-connectTimeout: 10000
-});
+    await mongoose.connect(mongoURL, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+    });
 
-pool.getConnection((err, connection) => {
-if (err) {
-    console.error('Pool connection failed at startup:', err.message);
+    console.log('✅ MongoDB connected successfully');
+    return mongoose.connection;
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
     process.exit(1);
-}
-console.log('MySQL pool created successfully');
-connection.release();
-});
+  }
+};
 
-module.exports = pool.promise();
+module.exports = connectDB;

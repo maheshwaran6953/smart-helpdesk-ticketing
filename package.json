@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "mongoose": "^9.6.2"
+    "bcrypt": "^5.x.x",
+    "mongoose": "^7.x.x"
   }
 }
