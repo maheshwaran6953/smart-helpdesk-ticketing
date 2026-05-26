@@ -1,54 +1,64 @@
-const db = require('../config/db');
+const { Notification } = require('../models');
 
+// Get all notifications for user
 exports.getNotifications = async (req, res) => {
-try {
-    const [notifications] = await db.execute(`
-    SELECT * FROM notifications
-    WHERE user_id = ?
-    ORDER BY created_at DESC
-    `, [req.user.id]);
+  try {
+    const userId = req.user.id;
 
-    const unreadCount = notifications.filter(n => !n.is_read).length;
+    const notifications = await Notification.find({ userId })
+      .populate('ticketId', 'ticketId title')
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
-    notifications,
-    unread_count: unreadCount
+      count: notifications.length,
+      notifications
     });
-
-} catch (error) {
+  } catch (error) {
     console.error('Get notifications error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
 };
 
-exports.markAllRead = async (req, res) => {
-try {
-    await db.execute(
-    'UPDATE notifications SET is_read = TRUE WHERE user_id = ?',
-    [req.user.id]
+// Mark all as read
+exports.markAllAsRead = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    await Notification.updateMany(
+      { userId, isRead: false },
+      { isRead: true }
     );
 
     res.status(200).json({ message: 'All notifications marked as read' });
-
-} catch (error) {
-    console.error('Mark read error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+  } catch (error) {
+    console.error('Mark all as read error:', error.message);
+    res.status(500).json({ error: 'Failed to mark notifications' });
+  }
 };
 
-exports.markOneRead = async (req, res) => {
-try {
+// Mark single as read
+exports.markAsRead = async (req, res) => {
+  try {
     const { id } = req.params;
 
-    await db.execute(
-    'UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?',
-    [id, req.user.id]
+    const notification = await Notification.findByIdAndUpdate(
+      id,
+      { isRead: true },
+      { new: true }
     );
 
-    res.status(200).json({ message: 'Notification marked as read' });
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
 
-} catch (error) {
-    console.error('Mark one read error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.status(200).json({
+      message: 'Notification marked as read',
+      notification
+    });
+  } catch (error) {
+    console.error('Mark as read error:', error.message);
+    res.status(500).json({ error: 'Failed to mark notification' });
+  }
 };
+
+module.exports = exports;

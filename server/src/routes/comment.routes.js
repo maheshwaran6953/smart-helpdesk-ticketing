@@ -1,16 +1,12 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
+const commentController = require('../controllers/comment.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 
-// Routes will be implemented in Phase 2.3
-// For now, just prevent errors
+// Get all comments for a ticket
+router.get('/', authenticate, commentController.getComments);
 
-router.get('/', authenticate, (req, res) => {
-  res.json({ message: 'Get comments endpoint - coming soon' });
-});
-
-router.post('/', authenticate, (req, res) => {
-  res.json({ message: 'Create comment endpoint - coming soon' });
-});
+// Create comment
+router.post('/', authenticate, commentController.createComment);
 
 module.exports = router;

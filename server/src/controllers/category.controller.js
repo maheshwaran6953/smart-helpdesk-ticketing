@@ -1,29 +1,35 @@
-const db = require('../config/db');
+const { Category } = require('../models');
 
+// Get all categories
 exports.getCategories = async (req, res) => {
-try {
-    const [categories] = await db.execute(
-    'SELECT * FROM categories ORDER BY name'
-    );
-    res.status(200).json({ categories });
-} catch (error) {
+  try {
+    const categories = await Category.find().sort({ name: 1 });
+
+    res.status(200).json({
+      count: categories.length,
+      categories
+    });
+  } catch (error) {
     console.error('Get categories error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
 };
 
+// Get single category
 exports.getCategoryById = async (req, res) => {
-try {
+  try {
     const { id } = req.params;
-    const [rows] = await db.execute(
-    'SELECT * FROM categories WHERE id = ?', [id]
-    );
-    if (!rows.length) {
-    return res.status(404).json({ message: 'Category not found' });
+
+    const category = await Category.findById(id);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
     }
-    res.status(200).json({ category: rows[0] });
-} catch (error) {
+
+    res.status(200).json({ category });
+  } catch (error) {
     console.error('Get category error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.status(500).json({ error: 'Failed to fetch category' });
+  }
 };
+
+module.exports = exports;
