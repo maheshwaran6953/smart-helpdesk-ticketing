@@ -1,343 +1,448 @@
-const Ticket = require('../models/Ticket');
-const db = require('../config/db');
+const { Ticket, User, Comment, AuditLog, KB, TicketKBUsage } = require('../models');
 
-const getSLADeadline = (priority) => {
-const hours = { critical: 2, high: 4, medium: 8, low: 24 };
-const now = new Date();
-now.setHours(now.getHours() + hours[priority]);
-return now;
+// Helper: Generate ticket ID (e.g., #001, #002)
+const generateTicketId = async () => {
+  const count = await Ticket.countDocuments();
+  return `#${String(count + 1).padStart(3, '0')}`;
 };
 
-const autoAssignAgent = async (category_id) => {
-const [agents] = await db.execute(`
-    SELECT u.id, COUNT(t.id) AS open_tickets
-    FROM users u
-    LEFT JOIN tickets t ON t.agent_id = u.id AND t.status IN ('open', 'in_progress')
-    WHERE u.role = 'agent'
-    GROUP BY u.id
-    ORDER BY open_tickets ASC
-    LIMIT 1
-`);
-return agents.length ? agents[0].id : null;
+// Helper: Calculate SLA deadline based on priority
+const calculateSLADeadline = (priority) => {
+  const now = new Date();
+  const hours = {
+    critical: 2,
+    high: 4,
+    medium: 8,
+    low: 24
+  };
+  return new Date(now.getTime() + (hours[priority] || 24) * 60 * 60 * 1000);
 };
 
+// 1. CREATE TICKET
 exports.createTicket = async (req, res) => {
-try {
-    const { title, description, category_id, priority } = req.body;
+  try {
+    const { title, description, priority, categoryId } = req.body;
+    const userId = req.user.id; // From JWT middleware
+
     if (!title || !description) {
-    return res.status(400).json({ message: 'Title and description are required' });
+      return res.status(400).json({ error: 'Title and description required' });
     }
-    const sla_deadline = getSLADeadline(priority || 'medium');
-    const agent_id = await autoAssignAgent(category_id);
-    const newTicket = {
-    title, description,
-    category_id: category_id || null,
-    priority: priority || 'medium',
-    user_id: req.user.id,
-    agent_id, sla_deadline
-    };
-    const ticket = await Ticket.create(newTicket);
-    await db.execute(
-    'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-    [ticket.id, req.user.id, null, 'open', 'Ticket created']
-    );
-    if (agent_id) {
-    await db.execute(
-        'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [agent_id, `New ticket assigned to you: ${title}`]
-    );
-    }
-    res.status(201).json({ message: 'Ticket created successfully', ticket });
-} catch (error) {
+
+    // Generate ticket ID
+    const ticketId = await generateTicketId();
+
+    // Calculate SLA deadline
+    const slaDeadline = calculateSLADeadline(priority);
+
+    // Create ticket
+    const ticket = new Ticket({
+      ticketId,
+      title,
+      description,
+      priority: priority || 'medium',
+      categoryId: categoryId || null,
+      userId,
+      slaDeadline,
+      status: 'open'
+    });
+
+    await ticket.save();
+
+    // Create audit log
+    await AuditLog.create({
+      ticketId: ticket._id,
+      userId,
+      action: 'created',
+      details: { title, description, priority }
+    });
+
+    res.status(201).json({
+      message: 'Ticket created successfully',
+      ticket
+    });
+  } catch (error) {
     console.error('Create ticket error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.status(500).json({ error: 'Failed to create ticket' });
+  }
 };
 
+// 2. GET ALL TICKETS
 exports.getAllTickets = async (req, res) => {
-try {
-    const { status, priority, category_id, search } = req.query;
-    let conditions = [];
-    let params = [];
-    if (req.user.role === 'agent') { conditions.push('t.agent_id = ?'); params.push(req.user.id); }
-    else if (req.user.role === 'user') { conditions.push('t.user_id = ?'); params.push(req.user.id); }
-    if (status) { conditions.push('t.status = ?'); params.push(status); }
-    if (priority) { conditions.push('t.priority = ?'); params.push(priority); }
-    if (category_id) { conditions.push('t.category_id = ?'); params.push(category_id); }
+  try {
+    const { priority, status, search } = req.query;
+
+    // Build filter
+    let filter = { status: { $ne: 'closed' } };
+
+    if (priority) filter.priority = priority;
+    if (status) filter.status = status;
     if (search) {
-    conditions.push('(t.title LIKE ? OR t.description LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`);
-    }
-    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-    const query = `
-    SELECT t.*, u.name AS user_name, a.name AS agent_name, c.name AS category_name
-    FROM tickets t
-    LEFT JOIN users u ON t.user_id = u.id
-    LEFT JOIN users a ON t.agent_id = a.id
-    LEFT JOIN categories c ON t.category_id = c.id
-    ${whereClause}
-    ORDER BY t.created_at DESC
-    `;
-    const [tickets] = await db.execute(query, params);
-    res.status(200).json({ count: tickets.length, tickets });
-} catch (error) {
-    console.error('Get tickets error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
-};
-
-exports.getTicketById = async (req, res) => {
-try {
-    const { id } = req.params;
-    const [rows] = await db.execute(`
-    SELECT t.*, u.name AS user_name, a.name AS agent_name, c.name AS category_name
-    FROM tickets t
-    LEFT JOIN users u ON t.user_id = u.id
-    LEFT JOIN users a ON t.agent_id = a.id
-    LEFT JOIN categories c ON t.category_id = c.id
-    WHERE t.id = ?
-    `, [id]);
-    if (!rows.length) return res.status(404).json({ message: 'Ticket not found' });
-    res.status(200).json({ ticket: rows[0] });
-} catch (error) {
-    console.error('Get ticket error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
-};
-
-exports.updateTicketStatus = async (req, res) => {
-try {
-    const { id } = req.params;
-    const { status, note } = req.body;
-    const validStatuses = ['open', 'in_progress', 'resolved', 'closed', 'pending_verification'];
-    if (!validStatuses.includes(status)) {
-    return res.status(400).json({ message: 'Invalid status value' });
-    }
-    const [rows] = await db.execute('SELECT * FROM tickets WHERE id = ?', [id]);
-    if (!rows.length) return res.status(404).json({ message: 'Ticket not found' });
-    const ticket = rows[0];
-    const oldStatus = ticket.status;
-
-    if (status === 'resolved' && req.user.role === 'agent') {
-    await db.execute('UPDATE tickets SET status = ?, resolved_at = NOW() WHERE id = ?', ['pending_verification', id]);
-    await db.execute(
-        'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-        [id, req.user.id, oldStatus, 'pending_verification', note || 'Agent marked as resolved — awaiting user confirmation']
-    );
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [ticket.user_id, `Your ticket "${ticket.title}" has been resolved by the agent. Please confirm if your issue is fixed or reopen it.`]
-    );
-    return res.status(200).json({ message: 'Ticket marked as pending verification. User must confirm closure.', status: 'pending_verification' });
+      filter.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
     }
 
-    if (req.user.role === 'admin') {
-    await db.execute('UPDATE tickets SET status = ? WHERE id = ?', [status, id]);
-    await db.execute(
-        'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-        [id, req.user.id, oldStatus, status, note || `Admin updated status to ${status}`]
-    );
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [ticket.user_id, `Your ticket "${ticket.title}" status changed to: ${status}`]
-    );
-    return res.status(200).json({ message: `Ticket status updated to: ${status}` });
-    }
+    // Fetch tickets with populated references
+    const tickets = await Ticket.find(filter)
+      .populate('userId', 'name email')
+      .populate('assignedAgentId', 'name email')
+      .populate('categoryId', 'name')
+      .sort({ createdAt: -1 });
 
-    await db.execute('UPDATE tickets SET status = ? WHERE id = ?', [status, id]);
-    await db.execute(
-    'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-    [id, req.user.id, oldStatus, status, note || null]
-    );
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-    [ticket.user_id, `Your ticket "${ticket.title}" status changed to: ${status}`]
-    );
-    res.status(200).json({ message: `Ticket status updated to: ${status}` });
-} catch (error) {
-    console.error('Update status error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
-};
-
-exports.verifyTicketClosure = async (req, res) => {
-try {
-    const { id } = req.params;
-    const { action } = req.body;
-    if (!['confirm', 'reject'].includes(action)) {
-    return res.status(400).json({ message: 'Action must be confirm or reject' });
-    }
-    const [rows] = await db.execute('SELECT * FROM tickets WHERE id = ?', [id]);
-    if (!rows.length) return res.status(404).json({ message: 'Ticket not found' });
-    const ticket = rows[0];
-    if (ticket.user_id !== req.user.id) {
-    return res.status(403).json({ message: 'Only the ticket owner can confirm closure' });
-    }
-    if (ticket.status !== 'pending_verification') {
-    return res.status(400).json({ message: `Ticket is not awaiting verification. Current status: ${ticket.status}` });
-    }
-    if (action === 'confirm') {
-    await db.execute('UPDATE tickets SET status = ?, closed_at = NOW() WHERE id = ?', ['closed', id]);
-    await db.execute(
-        'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-        [id, req.user.id, 'pending_verification', 'closed', 'User confirmed resolution — ticket closed']
-    );
-    if (ticket.agent_id) {
-        await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [ticket.agent_id, `✅ Ticket #${id}: "${ticket.title}" has been confirmed and closed by the user.`]
-        );
-    }
-    return res.status(200).json({ message: 'Ticket confirmed and closed successfully.', status: 'closed' });
-    } else {
-    await db.execute('UPDATE tickets SET status = ? WHERE id = ?', ['open', id]);
-    await db.execute(
-        'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-        [id, req.user.id, 'pending_verification', 'open', 'User rejected resolution — ticket reopened']
-    );
-    if (ticket.agent_id) {
-        await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [ticket.agent_id, `❌ Ticket #${id}: "${ticket.title}" was rejected by the user and has been reopened.`]
-        );
-    }
-    const [admins] = await db.execute('SELECT id FROM users WHERE role = ?', ['admin']);
-    for (const admin of admins) {
-        await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [admin.id, `Ticket #${id}: "${ticket.title}" was reopened — user rejected the resolution.`]
-        );
-    }
-    return res.status(200).json({ message: 'Ticket rejected and reopened successfully.', status: 'open' });
-    }
-} catch (error) {
-    console.error('Verify closure error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
-};
-
-exports.reassignTicket = async (req, res) => {
-try {
-    const { id } = req.params;
-    const { agent_id, note } = req.body;
-    if (!agent_id) return res.status(400).json({ message: 'agent_id is required' });
-    const [rows] = await db.execute('SELECT * FROM tickets WHERE id = ?', [id]);
-    if (!rows.length) return res.status(404).json({ message: 'Ticket not found' });
-    const ticket = rows[0];
-    const oldAgentId = ticket.agent_id;
-    const [agentRows] = await db.execute('SELECT id, name FROM users WHERE id = ? AND role = ?', [agent_id, 'agent']);
-    if (!agentRows.length) return res.status(404).json({ message: 'Agent not found' });
-    const newAgent = agentRows[0];
-    await db.execute('UPDATE tickets SET agent_id = ? WHERE id = ?', [agent_id, id]);
-    await db.execute(
-    'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-    [id, req.user.id, ticket.status, ticket.status, note || `Manually reassigned from agent #${oldAgentId} to ${newAgent.name} by admin`]
-    );
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-    [agent_id, `Ticket #${id}: "${ticket.title}" has been assigned to you by admin.`]
-    );
-    if (oldAgentId && oldAgentId !== parseInt(agent_id)) {
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [oldAgentId, `Ticket #${id}: "${ticket.title}" has been reassigned to another agent by admin.`]
-    );
-    }
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-    [ticket.user_id, `Your ticket "${ticket.title}" has been reassigned to a new agent.`]
-    );
     res.status(200).json({
-    message: `Ticket #${id} successfully reassigned to ${newAgent.name}`,
-    ticket_id: id, new_agent_id: agent_id, new_agent_name: newAgent.name
+      count: tickets.length,
+      tickets
     });
-} catch (error) {
-    console.error('Reassign ticket error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+  } catch (error) {
+    console.error('Get all tickets error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch tickets' });
+  }
 };
 
-exports.getKBSuggestions = async (req, res) => {
-try {
+// 3. GET SINGLE TICKET
+exports.getTicketById = async (req, res) => {
+  try {
     const { id } = req.params;
-    const [rows] = await db.execute('SELECT * FROM tickets WHERE id = ?', [id]);
-    if (!rows.length) return res.status(404).json({ message: 'Ticket not found' });
-    const ticket = rows[0];
 
-    let [kbArticles] = await db.execute(`
-    SELECT id, title, problem_description, solution, category_id, times_used
-    FROM knowledge_base
-    WHERE category_id = ?
-    ORDER BY times_used DESC LIMIT 10
-    `, [ticket.category_id]);
+    const ticket = await Ticket.findById(id)
+      .populate('userId', 'name email')
+      .populate('assignedAgentId', 'name email')
+      .populate('categoryId', 'name');
 
-    if (kbArticles.length < 3) {
-    const [general] = await db.execute(`
-        SELECT id, title, problem_description, solution, category_id, times_used
-        FROM knowledge_base
-        WHERE category_id != ? OR category_id IS NULL
-        ORDER BY times_used DESC LIMIT 10
-    `, [ticket.category_id || 0]);
-    kbArticles = [...kbArticles, ...general];
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    if (kbArticles.length === 0) {
-    return res.json({ success: true, message: 'No KB articles found', suggestions: [] });
+    res.status(200).json({ ticket });
+  } catch (error) {
+    console.error('Get ticket error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch ticket' });
+  }
+};
+
+// 4. UPDATE TICKET
+exports.updateTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, priority, categoryId } = req.body;
+    const userId = req.user.id;
+
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const ticketText = `${ticket.title} ${ticket.description}`.toLowerCase();
-    const ticketWords = ticketText.split(/\W+/).filter(w => w.length > 3);
+    // Update fields
+    if (title) ticket.title = title;
+    if (description) ticket.description = description;
+    if (priority) ticket.priority = priority;
+    if (categoryId) ticket.categoryId = categoryId;
 
-    const scored = kbArticles.map(article => {
-    const articleText = `${article.title} ${article.problem_description}`.toLowerCase();
-    const matchCount = ticketWords.filter(word => articleText.includes(word)).length;
-    const score = ticketWords.length > 0 ? Math.round((matchCount / ticketWords.length) * 100) : 0;
-    return { ...article, relevance_score: score };
+    await ticket.save();
+
+    // Create audit log
+    await AuditLog.create({
+      ticketId: ticket._id,
+      userId,
+      action: 'status_changed',
+      details: { oldTitle: ticket.title, newTitle: title }
     });
 
-    const top3 = scored
-    .sort((a, b) => b.relevance_score - a.relevance_score || b.times_used - a.times_used)
-    .slice(0, 3);
-
-    res.json({ success: true, ticket_id: ticket.id, ticket_title: ticket.title, suggestions: top3 });
-} catch (error) {
-    console.error('KB suggestions error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.status(200).json({
+      message: 'Ticket updated successfully',
+      ticket
+    });
+  } catch (error) {
+    console.error('Update ticket error:', error.message);
+    res.status(500).json({ error: 'Failed to update ticket' });
+  }
 };
 
-exports.applySolution = async (req, res) => {
-try {
-    const { id, kbId } = req.params;
-    const { close_ticket } = req.body;
+// 5. CHANGE TICKET STATUS
+exports.updateStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const userId = req.user.id;
 
-    const [ticketRows] = await db.execute('SELECT * FROM tickets WHERE id = ?', [id]);
-    if (!ticketRows.length) return res.status(404).json({ message: 'Ticket not found' });
-
-    const [kbRows] = await db.execute('SELECT * FROM knowledge_base WHERE id = ?', [kbId]);
-    if (!kbRows.length) return res.status(404).json({ message: 'KB article not found' });
-
-    const ticket = ticketRows[0];
-    const kb = kbRows[0];
-
-    // ← FIXED: using 'message' not 'comment'
-    const commentText = `📚 Solution applied from Knowledge Base:\n\n**${kb.title}**\n\n${kb.solution}`;
-    await db.execute('INSERT INTO comments (ticket_id, user_id, message) VALUES (?, ?, ?)', [id, req.user.id, commentText]);
-    await db.execute('UPDATE knowledge_base SET times_used = times_used + 1 WHERE id = ?', [kbId]);
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-    [ticket.user_id, `A solution has been applied to your ticket "${ticket.title}" from our knowledge base.`]
-    );
-    await db.execute(
-    'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-    [id, req.user.id, ticket.status, ticket.status, `KB solution applied — Article #${kbId}: "${kb.title}"`]
-    );
-
-    if (close_ticket === true || close_ticket === 'true') {
-    await db.execute('UPDATE tickets SET status = ?, resolved_at = NOW() WHERE id = ?', ['pending_verification', id]);
-    await db.execute(
-        'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-        [id, req.user.id, ticket.status, 'pending_verification', 'Ticket moved to pending verification after KB solution applied']
-    );
-    await db.execute('INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-        [ticket.user_id, `Your ticket "${ticket.title}" has been resolved using a knowledge base solution. Please confirm if your issue is fixed.`]
-    );
-    return res.json({ success: true, message: 'KB solution applied and ticket moved to pending verification.', kb_article: kb.title, ticket_status: 'pending_verification' });
+    if (!['open', 'in_progress', 'pending_verification', 'resolved', 'closed'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
     }
 
-    res.json({ success: true, message: 'KB solution applied as comment successfully.', kb_article: kb.title, ticket_status: ticket.status });
-} catch (error) {
-    console.error('Apply solution error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
-}
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    const oldStatus = ticket.status;
+    ticket.status = status;
+
+    if (status === 'resolved') {
+      ticket.resolvedAt = new Date();
+    } else if (status === 'closed') {
+      ticket.closedAt = new Date();
+    }
+
+    await ticket.save();
+
+    // Create audit log
+    await AuditLog.create({
+      ticketId: ticket._id,
+      userId,
+      action: 'status_changed',
+      details: { oldStatus, newStatus: status }
+    });
+
+    res.status(200).json({
+      message: 'Status updated successfully',
+      ticket
+    });
+  } catch (error) {
+    console.error('Update status error:', error.message);
+    res.status(500).json({ error: 'Failed to update status' });
+  }
 };
+
+// 6. REASSIGN TICKET TO AGENT
+exports.reassignTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { assignedAgentId, note } = req.body;
+    const userId = req.user.id;
+
+    if (!assignedAgentId) {
+      return res.status(400).json({ error: 'Agent ID required' });
+    }
+
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Verify agent exists and has role 'agent'
+    const agent = await User.findById(assignedAgentId);
+    if (!agent || agent.role !== 'agent') {
+      return res.status(400).json({ error: 'Invalid agent' });
+    }
+
+    const oldAgentId = ticket.assignedAgentId;
+    ticket.assignedAgentId = assignedAgentId;
+    await ticket.save();
+
+    // Create audit log
+    await AuditLog.create({
+      ticketId: ticket._id,
+      userId,
+      action: 'assigned',
+      details: { oldAgentId, newAgentId: assignedAgentId, note }
+    });
+
+    res.status(200).json({
+      message: 'Ticket reassigned successfully',
+      ticket
+    });
+  } catch (error) {
+    console.error('Reassign ticket error:', error.message);
+    res.status(500).json({ error: 'Failed to reassign ticket' });
+  }
+};
+
+// 7. VERIFY RESOLUTION (User confirms fix)
+exports.verifyResolution = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    if (ticket.status !== 'pending_verification') {
+      return res.status(400).json({ error: 'Ticket is not pending verification' });
+    }
+
+    ticket.status = 'resolved';
+    ticket.resolvedAt = new Date();
+    await ticket.save();
+
+    // Create audit log
+    await AuditLog.create({
+      ticketId: ticket._id,
+      userId,
+      action: 'resolved',
+      details: { verifiedBy: userId }
+    });
+
+    res.status(200).json({
+      message: 'Resolution verified successfully',
+      ticket
+    });
+  } catch (error) {
+    console.error('Verify resolution error:', error.message);
+    res.status(500).json({ error: 'Failed to verify resolution' });
+  }
+};
+
+// 8. REJECT RESOLUTION (User says still having issues)
+exports.rejectResolution = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userId = req.user.id;
+
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    if (ticket.status !== 'pending_verification') {
+      return res.status(400).json({ error: 'Ticket is not pending verification' });
+    }
+
+    ticket.status = 'in_progress';
+    await ticket.save();
+
+    // Create audit log
+    await AuditLog.create({
+      ticketId: ticket._id,
+      userId,
+      action: 'reopened',
+      details: { reason, rejectedBy: userId }
+    });
+
+    res.status(200).json({
+      message: 'Resolution rejected, ticket reopened',
+      ticket
+    });
+  } catch (error) {
+    console.error('Reject resolution error:', error.message);
+    res.status(500).json({ error: 'Failed to reject resolution' });
+  }
+};
+
+// 9. SUGGEST PRIORITY (AI - NLP)
+exports.suggestPriority = async (req, res) => {
+  try {
+    const { description } = req.body;
+
+    if (!description) {
+      return res.status(400).json({ error: 'Description required' });
+    }
+
+    // Simple NLP keyword-based priority suggestion
+    const keywords = {
+      critical: ['crash', 'down', 'error', 'urgent', 'critical', 'emergency', 'not working'],
+      high: ['slow', 'issue', 'problem', 'help', 'important'],
+      medium: ['question', 'feature', 'update'],
+      low: ['suggestion', 'info', 'minor']
+    };
+
+    const text = description.toLowerCase();
+    let suggestedPriority = 'medium'; // default
+    let score = 0;
+
+    for (const [priority, words] of Object.entries(keywords)) {
+      const matches = words.filter(word => text.includes(word)).length;
+      if (matches > score) {
+        score = matches;
+        suggestedPriority = priority;
+      }
+    }
+
+    res.status(200).json({
+      suggestedPriority,
+      confidence: score > 0 ? Math.min((score / 3) * 100, 100) : 0
+    });
+  } catch (error) {
+    console.error('Suggest priority error:', error.message);
+    res.status(500).json({ error: 'Failed to suggest priority' });
+  }
+};
+
+// 10. CHECK DUPLICATE (Jaccard Similarity)
+exports.checkDuplicate = async (req, res) => {
+  try {
+    const { description } = req.body;
+
+    if (!description) {
+      return res.status(400).json({ error: 'Description required' });
+    }
+
+    // Get all open tickets
+    const openTickets = await Ticket.find({ status: { $ne: 'closed' } });
+
+    // Jaccard similarity function
+    const jaccard = (str1, str2) => {
+      const set1 = new Set(str1.toLowerCase().split(/\s+/));
+      const set2 = new Set(str2.toLowerCase().split(/\s+/));
+      const intersection = new Set([...set1].filter(x => set2.has(x)));
+      const union = new Set([...set1, ...set2]);
+      return intersection.size / union.size;
+    };
+
+    // Find similar tickets
+    const similarities = openTickets
+      .map(ticket => ({
+        ticketId: ticket.ticketId,
+        title: ticket.title,
+        similarity: jaccard(description, ticket.description)
+      }))
+      .filter(item => item.similarity > 0.7)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    res.status(200).json({
+      hasDuplicate: similarities.length > 0,
+      similarTickets: similarities.slice(0, 5)
+    });
+  } catch (error) {
+    console.error('Check duplicate error:', error.message);
+    res.status(500).json({ error: 'Failed to check duplicates' });
+  }
+};
+
+// 11. GET KB SUGGESTIONS
+exports.getKBSuggestions = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Get all KB articles
+    const kbArticles = await KB.find();
+
+    // Jaccard similarity
+    const jaccard = (str1, str2) => {
+      const set1 = new Set(str1.toLowerCase().split(/\s+/));
+      const set2 = new Set(str2.toLowerCase().split(/\s+/));
+      const intersection = new Set([...set1].filter(x => set2.has(x)));
+      const union = new Set([...set1, ...set2]);
+      return intersection.size / union.size;
+    };
+
+    // Find matching KB articles
+    const suggestions = kbArticles
+      .map(article => ({
+        _id: article._id,
+        title: article.title,
+        content: article.content.substring(0, 200), // Preview
+        similarity: jaccard(ticket.description, article.content)
+      }))
+      .filter(item => item.similarity > 0.5)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    res.status(200).json({
+      ticketId: ticket._id,
+      suggestions: suggestions.slice(0, 5)
+    });
+  } catch (error) {
+    console.error('Get KB suggestions error:', error.message);
+    res.status(500).json({ error: 'Failed to get KB suggestions' });
+  }
+};
+
+module.exports = exports;

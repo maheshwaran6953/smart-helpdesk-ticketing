@@ -1,12 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const categoryController = require('../controllers/category.controller');
-const verifyToken = require('../middleware/auth.middleware');
+const { authenticate } = require('../middleware/auth.middleware');
 
-router.use(verifyToken);
-
-router.get('/', categoryController.getCategories);
-
-router.get('/:id', categoryController.getCategoryById);
+router.get('/', authenticate, (req, res) => {
+  res.json({ message: 'Get categories - coming soon' });
+});
 
 module.exports = router;
