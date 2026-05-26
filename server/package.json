@@ -26,6 +26,7 @@
     "nodemon": "^3.1.14"
   },
   "devDependencies": {
-    "mongodb": "^7.2.0"
+    "mongodb": "^7.2.0",
+    "mysql-to-json": "^0.1.2"
   }
 }
