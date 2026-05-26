@@ -1,4 +1,4 @@
-const Ticket = require('../models/ticket.model');
+const Ticket = require('../models/Ticket');
 const db = require('../config/db');
 
 const getSLADeadline = (priority) => {

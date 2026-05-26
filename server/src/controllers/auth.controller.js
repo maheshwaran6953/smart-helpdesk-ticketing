@@ -1,92 +1,98 @@
-const bcrypt = require('bcryptjs');
-const User = require('../models/user.model');
+const { User } = require('../models');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 
-console.log('auth.controller loaded - bcrypt exists?', !!bcrypt);
-console.log('auth.controller loaded - User model exists?', !!User);
-if (User) {
-console.log('User model has findByEmail?', typeof User.findByEmail === 'function');
-}
-
+// Register new user
 exports.register = async (req, res) => {
-    try {
-    console.log('Entered register function');
+  try {
+    const { name, email, password, role } = req.body;
 
-    const { name, email, password, role, expertise } = req.body;
-    console.log('Request body:', { name, email });
-
+    // Validate input
     if (!name || !email || !password) {
-        return res.status(400).json({ message: 'Name, email, and password required' });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const existingUser = await User.findByEmail(email);
+    // Check if user already exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-        return res.status(400).json({ message: 'Email already in use' });
+      return res.status(409).json({ error: 'Email already registered' });
     }
 
-    const salt = bcrypt.genSaltSync(10);
-    const hashedPassword = bcrypt.hashSync(password, salt);
-
-    const newUser = { name, email, password: hashedPassword, role: role || 'user', expertise: expertise || null };
-
-    const createdUser = await User.create(newUser);
-
-    res.status(201).json({
-        message: 'User registered successfully',
-        user: {
-        id: createdUser.id,
-        name: createdUser.name,
-        email: createdUser.email,
-        role: createdUser.role
-        }
+    // Create new user
+    const user = new User({
+      name,
+      email: email.toLowerCase(),
+      password,
+      role: role || 'user'
     });
-    } catch (error) {
-    console.error('Registration error:', error.message);
-    console.error('Stack:', error.stack);
-    res.status(500).json({
-        message: 'Server error during registration',
-        error: error.message || 'Unknown'
-    });
-    }
-};
 
-exports.login = async (req, res) => {
-try {
-    const { email, password } = req.body;
+    // Save user (password will be hashed by pre-save hook)
+    await user.save();
 
-    if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password required' });
-    }
-
-    const user = await User.findByEmail(email);
-    if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-    }
-
-    const isMatch = bcrypt.compareSync(password, user.password);
-    if (!isMatch) {
-    return res.status(401).json({ message: 'Invalid password' });
-    }
-
+    // Generate JWT token
     const token = jwt.sign(
-    { id: user.id, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: '24h' }
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
     );
 
-    res.status(200).json({
-    message: 'Login successful',
-    token,
-    user: {
-        id: user.id,
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: {
+        id: user._id,
         name: user.name,
         email: user.email,
         role: user.role
-    }
+      }
     });
+  } catch (error) {
+    console.error('Register error:', error.message);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+};
 
-} catch (error) {
+// Login user
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Compare passwords
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
     console.error('Login error:', error.message);
-    res.status(500).json({ message: 'Server error during login' });
-}
+    res.status(500).json({ error: 'Login failed' });
+  }
 };

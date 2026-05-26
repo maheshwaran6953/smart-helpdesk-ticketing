@@ -1,267 +1,89 @@
-const db = require('../config/db');
-const { calculateBreachRisk } = require('../utils/predictiveEngine');
+const cron = require('node-cron');
+const { Ticket, User } = require('../models');
 
-const runSLACheck = async () => {
-  console.log('Running SLA escalation check...');
+const startSLAEscalationJob = () => {
+  console.log('SLA escalation job scheduled for every 15 minutes');
 
-  try {
+  // Run every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      console.log('Running SLA escalation check...');
 
-    // ─────────────────────────────────────────────
-    // PART 1 — Original SLA breach escalation logic
-    // ─────────────────────────────────────────────
-    const [breachedTickets] = await db.execute(`
-      SELECT t.*, u.name AS user_name
-      FROM tickets t
-      LEFT JOIN users u ON t.user_id = u.id
-      WHERE t.status IN ('open', 'in_progress')
-      AND t.sla_deadline < NOW()
-      AND t.is_escalated = 0
-    `);
+      // Find all open tickets with SLA deadline passed
+      const now = new Date();
+      const breachedTickets = await Ticket.find({
+        status: { $ne: 'closed' },
+        slaDeadline: { $lt: now },
+        isEscalated: false
+      });
 
-    if (breachedTickets.length === 0) {
-      console.log('No SLA breaches found.');
-    } else {
-      console.log(`Found ${breachedTickets.length} SLA breached ticket(s)`);
+      if (breachedTickets.length === 0) {
+        console.log('✅ No SLA breaches found');
+        return;
+      }
 
-      const [admins] = await db.execute(
-        'SELECT id FROM users WHERE role = ?', ['admin']
-      );
+      console.log(`⚠️ Found ${breachedTickets.length} breached ticket(s)`);
 
+      // Mark tickets as escalated
       for (const ticket of breachedTickets) {
-        await db.execute(
-          'UPDATE tickets SET is_escalated = 1 WHERE id = ?',
-          [ticket.id]
-        );
-
-        await db.execute(`
-          INSERT INTO ticket_logs 
-          (ticket_id, changed_by, old_status, new_status, note)
-          VALUES (?, ?, ?, ?, ?)`,
-          [ticket.id, admins[0].id, ticket.status, ticket.status, 'Auto escalated — SLA breached']
-        );
-
-        for (const admin of admins) {
-          await db.execute(
-            'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-            [admin.id, `SLA BREACHED — Ticket #${ticket.id}: "${ticket.title}" has exceeded its deadline`]
-          );
-        }
-
-        if (ticket.agent_id) {
-          await db.execute(
-            'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-            [ticket.agent_id, `URGENT — Ticket #${ticket.id}: "${ticket.title}" has breached SLA. Please resolve immediately.`]
-          );
-        }
-
-        console.log(`Ticket #${ticket.id} escalated successfully`);
-      }
-    }
-
-    // ─────────────────────────────────────────────
-    // PART 2 — Calculate breach risk for ALL open tickets
-    // ─────────────────────────────────────────────
-    const [openTickets] = await db.execute(`
-      SELECT * FROM tickets
-      WHERE status IN ('open', 'in_progress')
-    `);
-
-    if (openTickets.length > 0) {
-      console.log(`Calculating breach risk for ${openTickets.length} open ticket(s)...`);
-
-      for (const ticket of openTickets) {
-        const { score, reason } = await calculateBreachRisk(ticket);
-
-        await db.execute(
-          'UPDATE tickets SET breach_risk = ?, breach_risk_reason = ? WHERE id = ?',
-          [score, reason, ticket.id]
-        );
+        ticket.isEscalated = true;
+        await ticket.save();
+        console.log(`📌 Ticket #${ticket.ticketId} marked as escalated`);
       }
 
-      console.log('Breach risk scores updated for all open tickets.');
-    }
+      // Auto-redistribute high-risk tickets
+      console.log('🔄 Auto-redistribution check...');
+      const allOpenTickets = await Ticket.find({ 
+        status: { $in: ['open', 'in_progress'] } 
+      }).populate('assignedAgentId');
 
-    // ─────────────────────────────────────────────
-    // PART 3 — Warn admins about HIGH breach risk tickets (>= 80)
-    // ─────────────────────────────────────────────
-    const [highRiskTickets] = await db.execute(`
-      SELECT * FROM tickets
-      WHERE status IN ('open', 'in_progress')
-      AND breach_risk >= 80
-    `);
+      for (const ticket of allOpenTickets) {
+        if (ticket.breachRiskScore >= 80 && ticket.assignedAgentId) {
+          // Find least loaded agent
+          const agents = await User.find({ role: 'agent' });
+          if (agents.length === 0) continue;
 
-    if (highRiskTickets.length > 0) {
-      console.log(`Found ${highRiskTickets.length} high breach risk ticket(s)`);
+          const agentLoads = await Promise.all(
+            agents.map(async (agent) => {
+              const count = await Ticket.countDocuments({
+                assignedAgentId: agent._id,
+                status: { $in: ['open', 'in_progress'] }
+              });
+              return { agent, count };
+            })
+          );
 
-      const [admins] = await db.execute(
-        'SELECT id FROM users WHERE role = ?', ['admin']
-      );
+          const leastLoaded = agentLoads.reduce((prev, current) =>
+            prev.count < current.count ? prev : current
+          );
 
-      for (const ticket of highRiskTickets) {
-        for (const admin of admins) {
-          const [existing] = await db.execute(`
-            SELECT id FROM notifications
-            WHERE user_id = ?
-            AND message LIKE ?
-            AND created_at >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)
-          `, [admin.id, `%BREACH RISK%Ticket #${ticket.id}%`]);
-
-          if (existing.length === 0) {
-            await db.execute(
-              'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-              [admin.id, `⚠️ BREACH RISK ${ticket.breach_risk}% — Ticket #${ticket.id}: "${ticket.title}" is at critical risk of SLA breach`]
-            );
+          if (leastLoaded.agent._id.toString() !== ticket.assignedAgentId._id.toString()) {
+            ticket.assignedAgentId = leastLoaded.agent._id;
+            await ticket.save();
+            console.log(`✅ Ticket #${ticket.ticketId} auto-redistributed to ${leastLoaded.agent.name}`);
           }
         }
       }
-    }
 
-    // ─────────────────────────────────────────────
-    // PART 4 — Auto-redistribution (breach risk >= 80%)
-    // ─────────────────────────────────────────────
-    const [redistributeTickets] = await db.execute(`
-      SELECT * FROM tickets
-      WHERE status IN ('open', 'in_progress')
-      AND breach_risk >= 80
-      AND agent_id IS NOT NULL
-    `);
+      // Auto-close pending_verification tickets after 48 hours
+      const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+      const pendingOldTickets = await Ticket.find({
+        status: 'pending_verification',
+        updatedAt: { $lt: twoDaysAgo }
+      });
 
-    if (redistributeTickets.length > 0) {
-      console.log(`Auto-redistribution check: ${redistributeTickets.length} critical risk ticket(s)...`);
-
-      for (const ticket of redistributeTickets) {
-
-        // Find least loaded agent — excluding current agent
-        const [agents] = await db.execute(`
-          SELECT u.id, u.name, COUNT(t.id) AS open_count
-          FROM users u
-          LEFT JOIN tickets t 
-            ON t.agent_id = u.id 
-            AND t.status IN ('open', 'in_progress')
-          WHERE u.role = 'agent'
-          AND u.id != ?
-          GROUP BY u.id, u.name
-          ORDER BY open_count ASC
-          LIMIT 1
-        `, [ticket.agent_id]);
-
-        if (agents.length === 0) {
-          console.log(`No alternate agent available for Ticket #${ticket.id}`);
-          continue;
-        }
-
-        const newAgent = agents[0];
-
-        // Skip if new agent is already more loaded than current agent
-        const [currentLoad] = await db.execute(`
-          SELECT COUNT(*) AS open_count FROM tickets
-          WHERE agent_id = ? AND status IN ('open', 'in_progress')
-        `, [ticket.agent_id]);
-
-        if (newAgent.open_count >= currentLoad[0].open_count) {
-          console.log(`Ticket #${ticket.id} — no better agent available, skipping redistribution`);
-          continue;
-        }
-
-        const oldAgentId = ticket.agent_id;
-
-        // Reassign the ticket
-        await db.execute(
-          `UPDATE tickets SET agent_id = ? WHERE id = ?`,
-          [newAgent.id, ticket.id]
-        );
-
-        // Log the reassignment
-        const [admins] = await db.execute(
-          'SELECT id FROM users WHERE role = ?', ['admin']
-        );
-
-        await db.execute(`
-          INSERT INTO ticket_logs
-          (ticket_id, changed_by, old_status, new_status, note)
-          VALUES (?, ?, ?, ?, ?)`,
-          [
-            ticket.id,
-            admins[0].id,
-            ticket.status,
-            ticket.status,
-            `Auto-redistributed — breach risk ${ticket.breach_risk}%. Reassigned from agent #${oldAgentId} to agent #${newAgent.id} (${newAgent.name})`
-          ]
-        );
-
-        // Notify old agent
-        await db.execute(
-          'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-          [oldAgentId, `Ticket #${ticket.id}: "${ticket.title}" has been auto-reassigned due to ${ticket.breach_risk}% breach risk`]
-        );
-
-        // Notify new agent
-        await db.execute(
-          'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-          [newAgent.id, `⚠️ Ticket #${ticket.id}: "${ticket.title}" has been assigned to you — breach risk is ${ticket.breach_risk}%. Please prioritize immediately.`]
-        );
-
-        // Notify admins
-        for (const admin of admins) {
-          await db.execute(
-            'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-            [admin.id, `Auto-redistributed Ticket #${ticket.id} from agent #${oldAgentId} to ${newAgent.name} — breach risk ${ticket.breach_risk}%`]
-          );
-        }
-
-        console.log(`✅ Ticket #${ticket.id} auto-redistributed to ${newAgent.name} (breach risk: ${ticket.breach_risk}%)`);
+      for (const ticket of pendingOldTickets) {
+        ticket.status = 'closed';
+        ticket.closedAt = now;
+        await ticket.save();
+        console.log(`🔒 Ticket #${ticket.ticketId} auto-closed after 48h inactivity`);
       }
+
+      console.log('✅ SLA job completed');
+    } catch (error) {
+      console.error('❌ SLA job error:', error.message);
     }
-
-    const [pendingTickets] = await db.execute(`
-      SELECT * FROM tickets
-      WHERE status = 'pending_verification'
-      AND resolved_at < DATE_SUB(NOW(), INTERVAL 48 HOUR)
-    `);
-
-    if (pendingTickets.length > 0) {
-      console.log(`Auto-closing ${pendingTickets.length} ticket(s) pending verification > 48hrs...`);
-
-      const [admins] = await db.execute(
-        'SELECT id FROM users WHERE role = ?', ['admin']
-      );
-
-      for (const ticket of pendingTickets) {
-        await db.execute(
-          'UPDATE tickets SET status = ?, closed_at = NOW() WHERE id = ?',
-          ['closed', ticket.id]
-        );
-
-        await db.execute(
-          'INSERT INTO ticket_logs (ticket_id, changed_by, old_status, new_status, note) VALUES (?, ?, ?, ?, ?)',
-          [ticket.id, admins[0].id, 'pending_verification', 'closed', 'Auto-closed — user did not respond within 48 hours']
-        );
-
-        await db.execute(
-          'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-          [ticket.user_id, `Your ticket "${ticket.title}" has been auto-closed as no response was received within 48 hours.`]
-        );
-
-        if (ticket.agent_id) {
-          await db.execute(
-            'INSERT INTO notifications (user_id, message) VALUES (?, ?)',
-            [ticket.agent_id, `✅ Ticket #${ticket.id}: "${ticket.title}" was auto-closed after 48hrs — no user response.`]
-          );
-        }
-
-        console.log(`✅ Ticket #${ticket.id} auto-closed after 48hrs`);
-      }
-    }
-
-  } catch (error) {
-    console.error('SLA job error:', error.message);
-  }
-};
-
-const startSLAEscalationJob = () => {
-  setInterval(runSLACheck, 15 * 60 * 1000);
-  runSLACheck();
-  console.log('SLA escalation job started — runs every 15 minutes');
+  });
 };
 
 module.exports = startSLAEscalationJob;
