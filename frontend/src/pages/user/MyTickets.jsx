@@ -92,8 +92,8 @@ export default function UserMyTickets() {
                             ) : tickets.map((t) => {
                                 const isPending = t.status === 'pending_verification';
                                 return (
-                                    <div key={t.id}
-                                        onClick={() => navigate(`/user/tickets/${t.id}`)}
+                                    <div key={t._id}
+                                        onClick={() => navigate(`/user/tickets/${t._id}`)}
                                         style={{
                                             background: 'white', borderRadius: 16, padding: '20px 24px',
                                             boxShadow: '0 4px 24px rgba(79,106,245,0.08)', cursor: 'pointer',
@@ -118,9 +118,7 @@ export default function UserMyTickets() {
                                                 <PriorityBadge priority={t.priority} />
                                                 <StatusBadge status={t.status} />
                                                 {isPending && (
-                                                    <span style={{ background: '#F5F3FF', color: '#7C3AED', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                        ⚡ Action Needed
-                                                    </span>
+                                                    <span style={{ fontFamily: 'monospace', color: '#9CA3AF', fontSize: 12 }}>#{t._id}</span>
                                                 )}
                                             </div>
                                             <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1A1D2E', marginBottom: 6 }}>{t.title}</h3>

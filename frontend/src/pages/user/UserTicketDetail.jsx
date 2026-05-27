@@ -72,10 +72,11 @@ export default function UserTicketDetail() {
     const handleVerify = async (action) => {
         setVerifying(true);
         try {
-            await api.post(`/tickets/${id}/verify`, { action });
             if (action === 'confirm') {
+                await api.post(`/tickets/${id}/verify`, {});
                 toast.success('Resolution confirmed. Case archived.');
             } else {
+                await api.post(`/tickets/${id}/reject`, {});
                 toast.warning('Resolution rejected. Case reopened.');
             }
             await fetchTicketData();
@@ -91,12 +92,14 @@ export default function UserTicketDetail() {
 
     const isPending = ticket.status === 'pending_verification';
     const isClosed = ticket.status === 'closed';
+    const agentName = ticket.assignedAgentId?.name || 'Unassigned';
+    const categoryName = ticket.categoryId?.name || 'General';
 
     return (
         <div className="app-layout">
             <Sidebar />
             <div className="main-content">
-                <Navbar title={`Service Record #${id}`} />
+                <Navbar title={`Service Record #${ticket.ticketId}`} />
                 <div className="page-content">
                     <div className="max-w-6xl mx-auto">
                         <div className="flex items-center justify-between mb-6">
@@ -148,100 +151,100 @@ export default function UserTicketDetail() {
                             <div className="space-y-8">
                                 {/* Case Details */}
                                 <div className="card">
-                                   <div className="border-l-4 border-blue pl-5 py-1 mb-6">
-                                      <h1 className="font-heading font-extrabold text-[22px] text-text tracking-tight mb-2">
+                                <div className="border-l-4 border-blue pl-5 py-1 mb-6">
+                                    <h1 className="font-heading font-extrabold text-[22px] text-text tracking-tight mb-2">
                                         {ticket.title}
-                                      </h1>
-                                      <div className="flex flex-wrap gap-2">
+                                    </h1>
+                                    <div className="flex flex-wrap gap-2">
                                         <PriorityBadge priority={ticket.priority} />
                                         <StatusBadge status={ticket.status} />
-                                        {ticket.is_escalated === 1 && (
-                                          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-badge bg-red-soft text-red text-[11px] font-bold">
+                                        {ticket.isEscalated && (
+                                        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-badge bg-red-soft text-red text-[11px] font-bold">
                                             <div className="w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
                                             PROTOCOL OVERRIDE: ESCALATED
-                                          </div>
+                                        </div>
                                         )}
-                                      </div>
-                                   </div>
-                                   
-                                   <div className="bg-surface2 rounded-btn p-6 mb-8 border border-border">
-                                      <p className="text-[15px] leading-[1.8] text-text-secondary font-medium">
+                                    </div>
+                                </div>
+                                
+                                <div className="bg-surface2 rounded-btn p-6 mb-8 border border-border">
+                                    <p className="text-[15px] leading-[1.8] text-text-secondary font-medium">
                                         {ticket.description}
-                                      </p>
-                                   </div>
+                                    </p>
+                                </div>
 
-                                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 pt-6 border-t border-border">
-                                     <div>
-                                       <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-wider mb-1 block">Asset Allocation</label>
-                                       <p className="text-[13.5px] font-bold text-text-secondary">{ticket.agent_name || 'Pending...'}</p>
-                                     </div>
-                                     <div>
-                                       <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-wider mb-1 block">Classification</label>
-                                       <p className="text-[13.5px] font-bold text-text-secondary">{ticket.category_name || 'General'}</p>
-                                     </div>
-                                     <div className="col-span-2">
-                                       <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-wider mb-1 block">System Timestamp</label>
-                                       <p className="text-[12px] font-bold text-text-muted">{formatDateTime(ticket.created_at)}</p>
-                                     </div>
-                                   </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 pt-6 border-t border-border">
+                                    <div>
+                                    <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-wider mb-1 block">Asset Allocation</label>
+                                    <p className="text-[13.5px] font-bold text-text-secondary">{agentName}</p>
+                                    </div>
+                                    <div>
+                                    <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-wider mb-1 block">Classification</label>
+                                    <p className="text-[13.5px] font-bold text-text-secondary">{categoryName}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                    <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-wider mb-1 block">System Timestamp</label>
+                                    <p className="text-[12px] font-bold text-text-muted">{formatDateTime(ticket.createdAt)}</p>
+                                    </div>
+                                </div>
                                 </div>
 
                                 {/* Thread Section */}
                                 <div className="card !p-0 overflow-hidden">
-                                   <div className="px-8 py-5 border-b border-border bg-surface2/50 flex items-center justify-between">
-                                      <h3 className="font-heading font-bold text-[15px] text-text">Communication Manifest</h3>
-                                      <div className="flex items-center gap-2">
-                                         <div className="w-1.5 h-1.5 rounded-full bg-green" />
-                                         <span className="text-[10px] font-extrabold text-green shadow-sm uppercase tracking-widest">Active Link</span>
-                                      </div>
-                                   </div>
+                                <div className="px-8 py-5 border-b border-border bg-surface2/50 flex items-center justify-between">
+                                    <h3 className="font-heading font-bold text-[15px] text-text">Communication Manifest</h3>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-green" />
+                                        <span className="text-[10px] font-extrabold text-green shadow-sm uppercase tracking-widest">Active Link</span>
+                                    </div>
+                                </div>
 
-                                   <div className="p-8">
-                                      <div className="space-y-6 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar mb-8">
-                                          {comments.map((c, i) => {
-                                              const isMine = c.user_id === user.id;
-                                              return (
-                                                  <div key={i} className={`flex gap-4 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
-                                                      <div className={`w-10 h-10 rounded-avatar flex-shrink-0 flex items-center justify-center text-white font-extrabold text-[12px] shadow-sm ${isMine ? 'bg-indigo' : 'bg-blue'}`}>
-                                                          {getInitials(c.user_name)}
-                                                      </div>
-                                                      <div className={`max-w-[75%] ${isMine ? 'text-right' : 'text-left'}`}>
-                                                          <div className="text-[11px] font-extrabold text-text-muted uppercase tracking-tight mb-1.5">
-                                                              {isMine ? 'Author (You)' : c.user_name} · {formatDateTime(c.created_at)}
-                                                          </div>
-                                                          <div className={`p-4 rounded-card text-[14px] leading-relaxed shadow-sh0 ${isMine ? 'bg-indigo text-white rounded-tr-none' : 'bg-surface2 text-text rounded-tl-none border border-border'}`}>
-                                                              {c.message}
-                                                          </div>
-                                                      </div>
-                                                  </div>
-                                              );
-                                          })}
-                                          <div ref={commentsEndRef} />
-                                      </div>
-                                      
-                                      {!isClosed ? (
-                                          <div className="flex gap-3 pt-6 border-t border-border">
-                                              <input 
+                                <div className="p-8">
+                                    <div className="space-y-6 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar mb-8">
+                                        {comments.map((c, i) => {
+                                            const isMine = c.userId._id === user.id;
+                                            return (
+                                                <div key={i} className={`flex gap-4 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
+                                                    <div className={`w-10 h-10 rounded-avatar flex-shrink-0 flex items-center justify-center text-white font-extrabold text-[12px] shadow-sm ${isMine ? 'bg-indigo' : 'bg-blue'}`}>
+                                                        {getInitials(c.userId?.name || 'User')}
+                                                    </div>
+                                                    <div className={`max-w-[75%] ${isMine ? 'text-right' : 'text-left'}`}>
+                                                        <div className="text-[11px] font-extrabold text-text-muted uppercase tracking-tight mb-1.5">
+                                                            {isMine ? 'Author (You)' : c.userId?.name || 'Unknown'} · {formatDateTime(c.createdAt)}
+                                                        </div>
+                                                        <div className={`p-4 rounded-card text-[14px] leading-relaxed shadow-sh0 ${isMine ? 'bg-indigo text-white rounded-tr-none' : 'bg-surface2 text-text rounded-tl-none border border-border'}`}>
+                                                            {c.message}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        <div ref={commentsEndRef} />
+                                    </div>
+                                    
+                                    {!isClosed ? (
+                                        <div className="flex gap-3 pt-6 border-t border-border">
+                                            <input 
                                                 className="form-input flex-1" 
                                                 placeholder="Dispatch professional communication..." 
                                                 value={newComment} 
                                                 onChange={(e) => setNewComment(e.target.value)} 
                                                 onKeyDown={(e) => e.key === 'Enter' && handleSendComment()} 
-                                              />
-                                              <button 
+                                            />
+                                            <button 
                                                 className="btn-primary !px-10 h-[42px]" 
                                                 onClick={handleSendComment} 
                                                 disabled={sendingComment || !newComment.trim()}
-                                              >
+                                            >
                                                 {sendingComment ? '...' : 'Dispatch'}
-                                              </button>
-                                          </div>
-                                      ) : (
-                                          <div className="py-6 px-4 bg-surface2 rounded-btn border-2 border-dashed border-border text-center">
-                                              <p className="text-[13px] text-text-disabled font-bold uppercase tracking-[2px]">Case Archived · Read Only Link</p>
-                                          </div>
-                                      )}
-                                   </div>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="py-6 px-4 bg-surface2 rounded-btn border-2 border-dashed border-border text-center">
+                                            <p className="text-[13px] text-text-disabled font-bold uppercase tracking-[2px]">Case Archived · Read Only Link</p>
+                                        </div>
+                                    )}
+                                </div>
                                 </div>
                             </div>
 
@@ -249,56 +252,56 @@ export default function UserTicketDetail() {
                             <div className="space-y-6">
                                 {/* Case Metadata */}
                                 <div className="card">
-                                   <div className="flex items-center gap-2 mb-6">
-                                     <div className="w-1.5 h-1.5 rounded-full bg-indigo" />
-                                     <h3 className="font-heading font-bold text-[14px] text-text tracking-tight uppercase">Audit Logs</h3>
-                                  </div>
-                                  <div className="space-y-6">
-                                      <div className="relative pl-6 border-l-2 border-border space-y-8">
-                                          <div className="relative">
-                                              <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-white border-2 border-blue" />
-                                              <div className="text-[13px] font-bold text-text mb-0.5">Initialization</div>
-                                              <div className="text-[11px] font-bold text-text-disabled uppercase">{formatDateTime(ticket.created_at)}</div>
-                                          </div>
-                                          {ticket.agent_name && (
-                                              <div className="relative">
-                                                  <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-white border-2 border-orange" />
-                                                  <div className="text-[13px] font-bold text-text mb-0.5">Asset Designated</div>
-                                                  <div className="text-[11px] font-bold text-text-disabled uppercase">{ticket.agent_name}</div>
-                                              </div>
-                                          )}
-                                          {ticket.resolved_at && (
-                                              <div className="relative">
-                                                  <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-white border-2 border-green shadow-sm shadow-green/20" />
-                                                  <div className="text-[13px] font-bold text-text mb-0.5">Resolution Logged</div>
-                                                  <div className="text-[11px] font-bold text-text-disabled uppercase">{formatDateTime(ticket.resolved_at)}</div>
-                                              </div>
-                                          )}
-                                      </div>
-                                  </div>
+                                <div className="flex items-center gap-2 mb-6">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-indigo" />
+                                    <h3 className="font-heading font-bold text-[14px] text-text tracking-tight uppercase">Audit Logs</h3>
+                                </div>
+                                <div className="space-y-6">
+                                    <div className="relative pl-6 border-l-2 border-border space-y-8">
+                                        <div className="relative">
+                                            <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-white border-2 border-blue" />
+                                            <div className="text-[13px] font-bold text-text mb-0.5">Initialization</div>
+                                            <div className="text-[11px] font-bold text-text-disabled uppercase">{formatDateTime(ticket.createdAt)}</div>
+                                        </div>
+                                        {ticket.assignedAgentId && (
+                                            <div className="relative">
+                                                <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-white border-2 border-orange" />
+                                                <div className="text-[13px] font-bold text-text mb-0.5">Asset Designated</div>
+                                                <div className="text-[11px] font-bold text-text-disabled uppercase">{agentName}</div>
+                                            </div>
+                                        )}
+                                        {ticket.resolvedAt && (
+                                            <div className="relative">
+                                                <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-white border-2 border-green shadow-sm shadow-green/20" />
+                                                <div className="text-[13px] font-bold text-text mb-0.5">Resolution Logged</div>
+                                                <div className="text-[11px] font-bold text-text-disabled uppercase">{formatDateTime(ticket.resolvedAt)}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                                 </div>
 
                                 {/* Performance Monitor */}
                                 <div className="card space-y-4">
-                                   <div className="flex items-center gap-2 mb-2">
-                                     <div className="w-1.5 h-1.5 rounded-full bg-red" />
-                                     <h3 className="font-heading font-bold text-[14px] text-text tracking-tight uppercase">SLA Compliance</h3>
-                                  </div>
-                                  
-                                  <div className="bg-surface2 rounded-btn p-4 border border-border">
-                                      <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest block mb-2">Service Deadline</label>
-                                      <div className="font-heading font-extrabold text-[16px] text-text mb-1">{formatDateTime(ticket.sla_deadline)}</div>
-                                      <div className="w-full h-1.5 bg-border rounded-full overflow-hidden mt-3">
-                                          <div className={`h-full rounded-full ${ticket.is_escalated ? 'bg-red' : 'bg-blue'}`} style={{ width: '100%' }} />
-                                      </div>
-                                  </div>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red" />
+                                    <h3 className="font-heading font-bold text-[14px] text-text tracking-tight uppercase">SLA Compliance</h3>
+                                </div>
+                                
+                                <div className="bg-surface2 rounded-btn p-4 border border-border">
+                                    <label className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest block mb-2">Service Deadline</label>
+                                    <div className="font-heading font-extrabold text-[16px] text-text mb-1">{formatDateTime(ticket.slaDeadline)}</div>
+                                    <div className="w-full h-1.5 bg-border rounded-full overflow-hidden mt-3">
+                                        <div className={`h-full rounded-full ${ticket.isEscalated ? 'bg-red' : 'bg-blue'}`} style={{ width: '100%' }} />
+                                    </div>
+                                </div>
 
-                                  {ticket.is_escalated === 1 && (
-                                      <div className="p-4 bg-red-soft rounded-badge border border-red/10 flex items-center gap-3">
-                                          <div className="w-2 h-2 rounded-full bg-red animate-pulse" />
-                                          <span className="text-[11.5px] font-bold text-red uppercase tracking-tight leading-tight">SLA Breach protocol triggered</span>
-                                      </div>
-                                  )}
+                                {ticket.isEscalated && (
+                                    <div className="p-4 bg-red-soft rounded-badge border border-red/10 flex items-center gap-3">
+                                        <div className="w-2 h-2 rounded-full bg-red animate-pulse" />
+                                        <span className="text-[11.5px] font-bold text-red uppercase tracking-tight leading-tight">SLA Breach protocol triggered</span>
+                                    </div>
+                                )}
                                 </div>
                             </div>
                         </div>
